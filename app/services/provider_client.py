@@ -18,8 +18,7 @@ class ProviderClient:
     def _build_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         req = {
             'mchNo': settings.provider_mch_no,
-            'mchUserName': settings.provider_username,
-            'reqTime': int(time.time() * 1000),
+            'timestamp': int(time.time() * 1000),
             **payload,
         }
         req['signType'] = settings.provider_sign_type.upper()
@@ -31,29 +30,39 @@ class ProviderClient:
         with httpx.Client(timeout=self.timeout) as client:
             r = client.post(f'{self.base}{path}', json=payload)
             r.raise_for_status()
-            return r.json()
+            data = r.json()
+            if not isinstance(data, dict):
+                raise httpx.HTTPError(f'Provider returned non-JSON object for {path}')
+            return data
 
-    def create(self, mch_order_no: str, amount_cents: int, way_code: str, remark: str = '') -> dict[str, Any]:
-        payload = self._build_payload(
-            {
-                'mchOrderNo': mch_order_no,
-                'amount': amount_cents,
-                'currency': settings.default_currency,
-                'wayCode': way_code,
-                'notifyUrl': settings.notify_url,
-                'returnUrl': settings.return_url,
-                'subject': 'Balance Recharge',
-                'body': remark or 'Recharge order',
-            }
-        )
-        return self._post('/api/pay/create', payload)
+    def create(self, mch_order_no: str, amount_cents: int, way_code: str, remark: str = '', client_ip: str | None = None) -> dict[str, Any]:
+        payload = {
+            'mchOrderNo': mch_order_no,
+            'amount': int(amount_cents),
+            'currency': settings.default_currency.lower(),
+            'wayCode': way_code,
+            'notifyUrl': settings.notify_url,
+            'returnUrl': settings.return_url,
+            'subject': 'Balance Recharge',
+            'body': remark or 'Recharge order',
+            'extParam': f'user:{mch_order_no}',
+        }
+        if client_ip:
+            payload['clientIp'] = client_ip
+        request_payload = self._build_payload(payload)
+        return self._post('/api/pay/create', request_payload)
 
     def query(self, mch_order_no: str | None = None, pay_order_no: str | None = None) -> dict[str, Any]:
         payload = {'mchOrderNo': mch_order_no, 'payOrderNo': pay_order_no}
         payload = {k: v for k, v in payload.items() if v}
+        if not payload:
+            raise ValueError('Either mchOrderNo or payOrderNo is required for query')
         request_payload = self._build_payload(payload)
         return self._post('/api/pay/query', request_payload)
 
-    def close(self, mch_order_no: str) -> dict[str, Any]:
-        request_payload = self._build_payload({'mchOrderNo': mch_order_no})
+    def close(self, mch_order_no: str, pay_order_no: str | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {'mchOrderNo': mch_order_no}
+        if pay_order_no:
+            payload['payOrderNo'] = pay_order_no
+        request_payload = self._build_payload(payload)
         return self._post('/api/pay/close', request_payload)
