@@ -41,6 +41,7 @@ USER_HELP_TEXT = """User Commands:
 /status <mchOrderNo|payOrderNo> - Check order
 /orders - Recent orders
 /payoutrequest - Create payout request
+/bal - Check balance
 """
 
 ADMIN_HELP_TEXT = USER_HELP_TEXT + """
@@ -189,7 +190,7 @@ async def select_package(cb: CallbackQuery) -> None:
             logger.exception('Provider connection failed. Check PROVIDER_BASE_URL/DNS/network.')
             await cb.message.answer(
                 'Payment provider connection failed. Please contact admin.\n\n'
-                'Admin check: set correct PROVIDER_BASE_URL in .env (example: https://ggusonepay.com), then restart bot.'
+                'Admin check: set correct PROVIDER_BASE_URL in .env (example: https://www.ggusonepay.com), then restart bot.'
             )
             await cb.answer()
             return
@@ -209,14 +210,29 @@ async def select_package(cb: CallbackQuery) -> None:
             return
 
         data = resp.get('data', {}) if isinstance(resp, dict) else {}
-        order.status = str(data.get('state', '0'))
-        order.pay_order_no = data.get('payOrderNo')
-        order.cashier_url = data.get('cashierUrl')
         import json
 
         order.provider_raw_create = json.dumps(resp, ensure_ascii=False)
+        cashier = data.get('cashierUrl') if isinstance(data, dict) else None
+        state = str(data.get('state')) if isinstance(data, dict) and data.get('state') is not None else None
+
+        if not cashier:
+            order.status = '3'
+            db.commit()
+            top_msg = ''
+            if isinstance(resp, dict):
+                top_msg = str(resp.get('msg') or resp.get('message') or '')
+            await cb.message.answer(
+                'Provider did not return payment link (cashierUrl).\n'
+                f'Order marked as failed.\nReason: {top_msg or "unknown provider response"}'
+            )
+            await cb.answer()
+            return
+
+        order.status = state if state in {'0', '1', '2', '3', '4', '5', '6'} else '1'
+        order.pay_order_no = data.get('payOrderNo') if isinstance(data, dict) else None
+        order.cashier_url = cashier
         db.commit()
-    cashier = data.get('cashierUrl', 'N/A')
     await cb.message.answer(f'Order: `{order.mch_order_no}`\nPay URL: {cashier}', parse_mode='Markdown')
     await cb.answer('Order created')
 
@@ -253,6 +269,14 @@ async def menu_orders(cb: CallbackQuery) -> None:
     await orders_cmd(cb.message)
     await cb.answer()
 
+
+
+
+@router.message(Command('bal'))
+async def bal_cmd(message: Message) -> None:
+    with SessionLocal() as db:
+        user = get_or_create_user(db, message.from_user.id, message.from_user.username, message.from_user.full_name)
+    await message.answer(f'Available: ${user.balance_available}\nHold: ${user.balance_hold}')
 
 @router.callback_query(F.data == 'menu:balance')
 async def menu_balance(cb: CallbackQuery) -> None:

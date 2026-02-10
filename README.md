@@ -4,6 +4,16 @@ Telegram payment bot + webhook service for BTCPayments/ggusonepay pay-in flow, i
 
 ## Architecture overview
 
+## Bot capabilities
+
+What this bot can do:
+- Create payment orders & payment links
+- Auto payment confirmation via callback (`/notify`)
+- Order status check and admin reconcile flow
+- Internal balance system inside Telegram
+- Access-code / permission-based bot usage
+- Fixed global fee (default 15%) across gateways
+
 - **Telegram bot (aiogram)** handles user activation, recharge order creation, status checks, internal balances, payout requests, and admin actions.
 - **Webhook service (FastAPI)** receives `/notify` callback, verifies signature, performs idempotency checks, updates order state (0-6), and credits balance on success state `2`.
 - **MySQL (XAMPP)** stores users, access codes, gateway/packages, orders, ledger entries, payouts, audit logs, and callback events.
@@ -106,7 +116,7 @@ If you see `httpx.ConnectError: [Errno 11001] getaddrinfo failed`, your bot cann
 
 Checklist:
 - Ensure `.env` has a valid provider URL:
-  - `PROVIDER_BASE_URL=https://ggusonepay.com`
+  - `PROVIDER_BASE_URL=https://www.ggusonepay.com`
 - Do not include spaces or invalid hostname in `PROVIDER_BASE_URL`.
 - Confirm Windows/RDP machine DNS and firewall allow outbound HTTPS.
 - Restart bot after `.env` changes.
