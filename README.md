@@ -98,3 +98,17 @@ Then set the provided `https://...trycloudflare.com/notify` URL.
 - Amount for provider requests is always **integer cents**.
 - Fee is globally configured by `GLOBAL_FEE_PERCENT` (default 15).
 - Logging avoids printing secret keys/tokens.
+
+
+## Troubleshooting: `getaddrinfo failed` on package click
+
+If you see `httpx.ConnectError: [Errno 11001] getaddrinfo failed`, your bot cannot resolve/reach provider host.
+
+Checklist:
+- Ensure `.env` has a valid provider URL:
+  - `PROVIDER_BASE_URL=https://ggusonepay.com`
+- Do not include spaces or invalid hostname in `PROVIDER_BASE_URL`.
+- Confirm Windows/RDP machine DNS and firewall allow outbound HTTPS.
+- Restart bot after `.env` changes.
+
+The bot now catches this error and returns a user-friendly message instead of crashing.

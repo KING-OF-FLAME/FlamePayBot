@@ -1,4 +1,7 @@
 from decimal import Decimal
+import logging
+
+import httpx
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -26,6 +29,7 @@ from app.services.repositories import (
 router = Router()
 settings = get_settings()
 provider = ProviderClient()
+logger = logging.getLogger(__name__)
 
 
 
@@ -177,7 +181,33 @@ async def select_package(cb: CallbackQuery) -> None:
         gateway = db.get(GatewayConfig, pack.gateway_id)
         final_amount = int(round(pack.amount_cents * (1 + settings.global_fee_percent / 100)))
         order = create_order(db, user, gateway.way_code, pack.label, pack.amount_cents, Decimal(str(settings.global_fee_percent)), final_amount)
-        resp = provider.create(order.mch_order_no, final_amount, gateway.way_code, f'{gateway.title}/{pack.label}')
+        try:
+            resp = provider.create(order.mch_order_no, final_amount, gateway.way_code, f'{gateway.title}/{pack.label}')
+        except httpx.ConnectError:
+            order.status = '3'
+            db.commit()
+            logger.exception('Provider connection failed. Check PROVIDER_BASE_URL/DNS/network.')
+            await cb.message.answer(
+                'Payment provider connection failed. Please contact admin.\n\n'
+                'Admin check: set correct PROVIDER_BASE_URL in .env (example: https://ggusonepay.com), then restart bot.'
+            )
+            await cb.answer()
+            return
+        except httpx.HTTPError:
+            order.status = '3'
+            db.commit()
+            logger.exception('Provider HTTP error during create order')
+            await cb.message.answer('Payment request failed due to provider HTTP error. Try again later.')
+            await cb.answer()
+            return
+        except Exception:
+            order.status = '3'
+            db.commit()
+            logger.exception('Unexpected provider error during create order')
+            await cb.message.answer('Payment request failed unexpectedly. Try again later or contact admin.')
+            await cb.answer()
+            return
+
         data = resp.get('data', {}) if isinstance(resp, dict) else {}
         order.status = str(data.get('state', '0'))
         order.pay_order_no = data.get('payOrderNo')

@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     webhook_host: str = Field(default='0.0.0.0', alias='WEBHOOK_HOST')
     webhook_port: int = Field(default=8000, alias='WEBHOOK_PORT')
 
+    @field_validator('provider_base_url', mode='before')
+    @classmethod
+    def normalize_provider_base_url(cls, value: str) -> str:
+        v = (value or '').strip()
+        if not v:
+            raise ValueError('PROVIDER_BASE_URL is required')
+        if not v.startswith(('http://', 'https://')):
+            v = f'https://{v}'
+        return v.rstrip('/')
+
     @field_validator('admin_ids', mode='before')
     @classmethod
     def parse_admin_ids(cls, value: str | List[int]) -> List[int]:
