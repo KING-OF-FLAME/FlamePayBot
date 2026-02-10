@@ -5,6 +5,7 @@ import httpx
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
@@ -97,6 +98,14 @@ async def activate(message: Message) -> None:
     await message.answer(msg)
 
 
+
+
+async def _safe_cb_answer(cb: CallbackQuery, text: str | None = None) -> None:
+    try:
+        await cb.answer(text or '')
+    except TelegramBadRequest:
+        logger.warning('Callback answer skipped: query too old/invalid')
+
 def _check_access(user: User) -> str | None:
     if user.is_banned:
         return 'You are banned.'
@@ -113,7 +122,7 @@ async def pay(message: Message) -> None:
 @router.callback_query(F.data == 'menu:pay')
 async def menu_pay(cb: CallbackQuery) -> None:
     await send_gateways(cb.message, cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
-    await cb.answer()
+    await _safe_cb_answer(cb)
 
 
 async def send_gateways(message: Message, tg_user_id: int, username: str | None, full_name: str | None) -> None:
@@ -142,7 +151,7 @@ async def select_gateway(cb: CallbackQuery) -> None:
         gw = db.scalar(select(GatewayConfig).where(GatewayConfig.way_code == way_code, GatewayConfig.enabled.is_(True)))
         if not gw:
             await cb.message.answer('Gateway is enabled in allowlist but package config is missing. Ask admin to set /gateway_config and /package_add.')
-            await cb.answer()
+            await _safe_cb_answer(cb)
             return
         packs = list(
             db.scalars(
@@ -154,30 +163,31 @@ async def select_gateway(cb: CallbackQuery) -> None:
 
     if not packs:
         await cb.message.answer('No packages configured for this gateway.')
-        await cb.answer()
+        await _safe_cb_answer(cb)
         return
 
     kb = InlineKeyboardBuilder()
     for p in packs:
         kb.row(InlineKeyboardButton(text=f'{p.label} (${p.amount_cents/100:.2f})', callback_data=f'pkg:{p.id}'))
     await cb.message.answer('Select package:', reply_markup=kb.as_markup())
-    await cb.answer()
+    await _safe_cb_answer(cb)
 
 
 @router.callback_query(F.data.startswith('pkg:'))
 async def select_package(cb: CallbackQuery) -> None:
+    await _safe_cb_answer(cb, 'Processing...')
     package_id = int(cb.data.split(':')[1])
     with SessionLocal() as db:
         user = get_or_create_user(db, cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
         denied = _check_access(user)
         if denied:
             await cb.message.answer(denied)
-            await cb.answer()
+            await _safe_cb_answer(cb)
             return
         pack = db.get(GatewayPackage, package_id)
         if not pack:
             await cb.message.answer('Package not found.')
-            await cb.answer()
+            await _safe_cb_answer(cb)
             return
         gateway = db.get(GatewayConfig, pack.gateway_id)
         final_amount = int(round(pack.amount_cents * (1 + settings.global_fee_percent / 100)))
@@ -192,21 +202,21 @@ async def select_package(cb: CallbackQuery) -> None:
                 'Payment provider connection failed. Please contact admin.\n\n'
                 'Admin check: set correct PROVIDER_BASE_URL in .env (example: https://www.ggusonepay.com), then restart bot.'
             )
-            await cb.answer()
+            await _safe_cb_answer(cb)
             return
         except httpx.HTTPError:
             order.status = '3'
             db.commit()
             logger.exception('Provider HTTP error during create order')
             await cb.message.answer('Payment request failed due to provider HTTP error. Try again later.')
-            await cb.answer()
+            await _safe_cb_answer(cb)
             return
         except Exception:
             order.status = '3'
             db.commit()
             logger.exception('Unexpected provider error during create order')
             await cb.message.answer('Payment request failed unexpectedly. Try again later or contact admin.')
-            await cb.answer()
+            await _safe_cb_answer(cb)
             return
 
         data = resp.get('data', {}) if isinstance(resp, dict) else {}
@@ -226,7 +236,7 @@ async def select_package(cb: CallbackQuery) -> None:
                 'Provider did not return payment link (cashierUrl).\n'
                 f'Order marked as failed.\nReason: {top_msg or "unknown provider response"}'
             )
-            await cb.answer()
+            await _safe_cb_answer(cb)
             return
 
         order.status = state if state in {'0', '1', '2', '3', '4', '5', '6'} else '1'
@@ -234,7 +244,7 @@ async def select_package(cb: CallbackQuery) -> None:
         order.cashier_url = cashier
         db.commit()
     await cb.message.answer(f'Order: `{order.mch_order_no}`\nPay URL: {cashier}', parse_mode='Markdown')
-    await cb.answer('Order created')
+    await _safe_cb_answer(cb, 'Order created')
 
 
 @router.message(Command('status'))
@@ -267,7 +277,7 @@ async def orders_cmd(message: Message) -> None:
 @router.callback_query(F.data == 'menu:orders')
 async def menu_orders(cb: CallbackQuery) -> None:
     await orders_cmd(cb.message)
-    await cb.answer()
+    await _safe_cb_answer(cb)
 
 
 
@@ -283,7 +293,7 @@ async def menu_balance(cb: CallbackQuery) -> None:
     with SessionLocal() as db:
         user = get_or_create_user(db, cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
     await cb.message.answer(f'Available: ${user.balance_available}\nHold: ${user.balance_hold}')
-    await cb.answer()
+    await _safe_cb_answer(cb)
 
 
 @router.message(Command('payoutrequest'))
@@ -294,7 +304,7 @@ async def payout_request_cmd(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data == 'menu:payout')
 async def menu_payout(cb: CallbackQuery, state: FSMContext) -> None:
     await start_payout_flow(cb.message, state, cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
-    await cb.answer()
+    await _safe_cb_answer(cb)
 
 
 async def start_payout_flow(message: Message, state: FSMContext, tg_user_id: int, username: str | None, full_name: str | None) -> None:
@@ -334,7 +344,7 @@ async def payout_network(cb: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(network=network)
     await state.set_state(PayoutFSM.waiting_address)
     await cb.message.answer('Send destination address:')
-    await cb.answer()
+    await _safe_cb_answer(cb)
 
 
 @router.message(PayoutFSM.waiting_address)
