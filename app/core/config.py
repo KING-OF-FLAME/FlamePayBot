@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     provider_key: str = Field(alias='PROVIDER_KEY')
     provider_sign_type: str = Field(alias='PROVIDER_SIGN_TYPE')
     provider_timeout_seconds: int = Field(default=15, alias='PROVIDER_TIMEOUT_SECONDS')
+    provider_retry_alt_sign: bool = Field(default=False, alias='PROVIDER_RETRY_ALT_SIGN')
 
     global_fee_percent: float = Field(default=15.0, alias='GLOBAL_FEE_PERCENT')
     default_currency: str = Field(default='USD', alias='DEFAULT_CURRENCY')
