@@ -49,12 +49,14 @@ class Settings(BaseSettings):
 
     @field_validator('admin_ids', mode='before')
     @classmethod
-    def parse_admin_ids(cls, value: str | List[int]) -> List[int]:
+    def parse_admin_ids(cls, value: str | int | List[int]) -> List[int]:
         if isinstance(value, list):
-            return value
+            return [int(v) for v in value]
+        if isinstance(value, int):
+            return [value]
         if not value:
             return []
-        return [int(x.strip()) for x in value.split(',') if x.strip()]
+        return [int(x.strip()) for x in str(value).split(',') if x.strip()]
 
     @property
     def sqlalchemy_database_uri(self) -> str:

@@ -1,6 +1,7 @@
 import json
 import logging
 from typing import Any
+from urllib.parse import parse_qsl
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -46,8 +47,15 @@ async def _read_callback_payload(request: Request) -> dict[str, Any]:
             raise ValueError('JSON body must be an object')
         return payload
 
-    if 'application/x-www-form-urlencoded' in content_type or 'multipart/form-data' in content_type:
-        form = await request.form()
+    if 'application/x-www-form-urlencoded' in content_type:
+        body = (await request.body()).decode('utf-8')
+        return dict(parse_qsl(body, keep_blank_values=True))
+
+    if 'multipart/form-data' in content_type:
+        try:
+            form = await request.form()
+        except AssertionError as exc:
+            raise ValueError('Multipart parsing requires python-multipart dependency') from exc
         return dict(form)
 
     body = await request.body()
