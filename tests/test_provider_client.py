@@ -1,0 +1,58 @@
+import os
+import unittest
+
+_REQUIRED_ENV = {
+    'APP_ENV': 'development',
+    'LOG_LEVEL': 'INFO',
+    'BOT_TOKEN': 'test-token',
+    'BOT_USERNAME': 'test_bot',
+    'ADMIN_IDS': '1',
+    'MYSQL_HOST': '127.0.0.1',
+    'MYSQL_PORT': '3306',
+    'MYSQL_USER': 'root',
+    'MYSQL_PASSWORD': '',
+    'MYSQL_DB': 'flamepaybot',
+    'PROVIDER_BASE_URL': 'https://www.ggusonepay.com',
+    'PROVIDER_MCH_NO': '123',
+    'PROVIDER_USERNAME': 'tester',
+    'PROVIDER_KEY': 'secret',
+    'PROVIDER_SIGN_TYPE': 'MD5',
+    'PROVIDER_TIMEOUT_SECONDS': '15',
+    'GLOBAL_FEE_PERCENT': '15.0',
+    'DEFAULT_CURRENCY': 'usd',
+    'NOTIFY_URL': 'https://example.com/notify',
+    'RETURN_URL': 'https://t.me/test_bot',
+}
+for key, value in _REQUIRED_ENV.items():
+    os.environ.setdefault(key, value)
+
+from app.services.provider_client import ProviderClient
+
+
+class DummyProviderClient(ProviderClient):
+    def __init__(self):
+        super().__init__()
+        self.calls: list[dict] = []
+
+    def _post(self, path: str, payload: dict):
+        self.calls.append({'path': path, 'payload': payload})
+        if len(self.calls) == 1:
+            return {'code': 1005, 'msg': 'SIGNATURE ERROR'}
+        return {'code': 0, 'msg': 'success', 'data': {'cashierUrl': 'https://example.com/cashier'}}
+
+
+class ProviderClientTests(unittest.TestCase):
+    def test_create_retries_on_signature_error_with_alt_signature(self):
+        client = DummyProviderClient()
+        response = client.create('ORD-1', 500, 'card')
+        self.assertEqual(response['code'], 0)
+        self.assertEqual(len(client.calls), 2)
+        first_payload = client.calls[0]['payload']
+        second_payload = client.calls[1]['payload']
+        self.assertEqual(first_payload['currency'], 'USD')
+        self.assertEqual(second_payload['currency'], 'USD')
+        self.assertNotEqual(first_payload['sign'], second_payload['sign'])
+
+
+if __name__ == '__main__':
+    unittest.main()
