@@ -40,7 +40,8 @@ class ProviderClient:
         if not isinstance(resp, dict):
             return False
         msg = str(resp.get('msg') or resp.get('message') or '').upper()
-        return 'DUPLICATE' in msg and 'SUBMISSION' in msg
+        code = str(resp.get('code', ''))
+        return ('DUPLICATE' in msg and 'SUBMISSION' in msg) or code == '14'
 
     @classmethod
     def _extract_cashier(cls, resp: dict[str, Any]) -> str | None:
@@ -100,15 +101,13 @@ class ProviderClient:
             response = self._post('/api/pay/create', alt_payload)
 
         if self._is_duplicate_submission(response):
-            last_query_response: dict[str, Any] | None = None
+            duplicate_response = response
             for _ in range(3):
                 query_response = self.query(mch_order_no=mch_order_no)
-                last_query_response = query_response
                 if self._extract_cashier(query_response):
                     return query_response
                 time.sleep(0.8)
-            if last_query_response is not None:
-                return last_query_response
+            return duplicate_response
 
         return response
 

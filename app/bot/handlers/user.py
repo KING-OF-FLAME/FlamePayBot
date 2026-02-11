@@ -1,5 +1,7 @@
 from decimal import Decimal
+import asyncio
 import logging
+import time
 
 import httpx
 
@@ -32,6 +34,9 @@ settings = get_settings()
 provider = ProviderClient()
 logger = logging.getLogger(__name__)
 
+_CALLBACK_LOCKS: dict[int, asyncio.Lock] = {}
+_RECENT_CHECKOUTS: dict[tuple[int, int], dict[str, str | float]] = {}
+_RECENT_TTL_SECONDS = 120.0
 
 
 USER_HELP_TEXT = """User Commands:
@@ -176,89 +181,115 @@ async def select_gateway(cb: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith('pkg:'))
 async def select_package(cb: CallbackQuery) -> None:
     await _safe_cb_answer(cb, 'Processing...')
+
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        logger.debug('Unable to clear inline keyboard for package callback')
+
     package_id = int(cb.data.split(':')[1])
-    with SessionLocal() as db:
-        user = get_or_create_user(db, cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
-        denied = _check_access(user)
-        if denied:
-            await cb.message.answer(denied)
-            await _safe_cb_answer(cb)
-            return
-        pack = db.get(GatewayPackage, package_id)
-        if not pack:
-            await cb.message.answer('Package not found.')
-            await _safe_cb_answer(cb)
-            return
-        gateway = db.get(GatewayConfig, pack.gateway_id)
-        final_amount = int(round(pack.amount_cents * (1 + settings.global_fee_percent / 100)))
-        order = create_order(db, user, gateway.way_code, pack.label, pack.amount_cents, Decimal(str(settings.global_fee_percent)), final_amount)
-        try:
-            resp = provider.create(order.mch_order_no, final_amount, gateway.way_code, f'{gateway.title}/{pack.label}')
-        except httpx.ConnectError:
-            order.status = '3'
-            db.commit()
-            logger.exception('Provider connection failed. Check PROVIDER_BASE_URL/DNS/network.')
-            await cb.message.answer(
-                'Payment provider connection failed. Please contact admin.\n\n'
-                'Admin check: set correct PROVIDER_BASE_URL in .env (example: https://www.ggusonepay.com), then restart bot.'
-            )
-            await _safe_cb_answer(cb)
-            return
-        except httpx.HTTPError:
-            order.status = '3'
-            db.commit()
-            logger.exception('Provider HTTP error during create order')
-            await cb.message.answer('Payment request failed due to provider HTTP error. Try again later.')
-            await _safe_cb_answer(cb)
-            return
-        except Exception:
-            order.status = '3'
-            db.commit()
-            logger.exception('Unexpected provider error during create order')
-            await cb.message.answer('Payment request failed unexpectedly. Try again later or contact admin.')
-            await _safe_cb_answer(cb)
-            return
+    lock = _CALLBACK_LOCKS.setdefault(cb.from_user.id, asyncio.Lock())
 
-        data = resp.get('data', {}) if isinstance(resp, dict) else {}
-        import json
-
-        order.provider_raw_create = json.dumps(resp, ensure_ascii=False)
-        cashier = provider._extract_cashier(resp)
-        state = str(data.get('state')) if isinstance(data, dict) and data.get('state') is not None else None
-
-        if not cashier:
-            top_msg = ''
-            if isinstance(resp, dict):
-                top_msg = str(resp.get('msg') or resp.get('message') or '')
-
-            if 'DUPLICATE SUBMISSION' in top_msg.upper():
-                order.status = '1'
-                order.pay_order_no = data.get('payOrderNo') if isinstance(data, dict) else None
-                db.commit()
+    async with lock:
+        cache_key = (cb.from_user.id, package_id)
+        cached = _RECENT_CHECKOUTS.get(cache_key)
+        now = time.monotonic()
+        if cached and now - float(cached.get('ts', 0.0)) <= _RECENT_TTL_SECONDS:
+            cached_url = str(cached.get('cashier_url') or '')
+            cached_order = str(cached.get('mch_order_no') or '')
+            if cached_url and cached_order:
                 await cb.message.answer(
-                    'Provider is processing an existing payment for this order.\n'
-                    f'Order: `{order.mch_order_no}`\n'
-                    'Use /status <mchOrderNo> in 10-20 seconds, or open My Orders to refresh status.',
+                    f'Using your latest checkout session.\nOrder: `{cached_order}`\nPay URL: {cached_url}',
                     parse_mode='Markdown',
                 )
-                await _safe_cb_answer(cb)
                 return
 
-            order.status = '3'
-            db.commit()
-            await cb.message.answer(
-                'Provider did not return payment link (cashierUrl).\n'
-                f'Order marked as failed.\nReason: {top_msg or "unknown provider response"}'
-            )
-            await _safe_cb_answer(cb)
-            return
+        with SessionLocal() as db:
+            user = get_or_create_user(db, cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
+            denied = _check_access(user)
+            if denied:
+                await cb.message.answer(denied)
+                return
+            pack = db.get(GatewayPackage, package_id)
+            if not pack:
+                await cb.message.answer('Package not found.')
+                return
+            gateway = db.get(GatewayConfig, pack.gateway_id)
+            final_amount = int(round(pack.amount_cents * (1 + settings.global_fee_percent / 100)))
+            order = create_order(db, user, gateway.way_code, pack.label, pack.amount_cents, Decimal(str(settings.global_fee_percent)), final_amount)
+            try:
+                resp = provider.create(order.mch_order_no, final_amount, gateway.way_code, f'{gateway.title}/{pack.label}')
+            except httpx.ConnectError:
+                order.status = '3'
+                db.commit()
+                logger.exception('Provider connection failed. Check PROVIDER_BASE_URL/DNS/network.')
+                await cb.message.answer(
+                    'Payment provider connection failed. Please contact admin.\n\n'
+                    'Admin check: set correct PROVIDER_BASE_URL in .env (example: https://www.ggusonepay.com), then restart bot.'
+                )
+                return
+            except httpx.HTTPError:
+                order.status = '3'
+                db.commit()
+                logger.exception('Provider HTTP error during create order')
+                await cb.message.answer('Payment request failed due to provider HTTP error. Try again later.')
+                return
+            except Exception:
+                order.status = '3'
+                db.commit()
+                logger.exception('Unexpected provider error during create order')
+                await cb.message.answer('Payment request failed unexpectedly. Try again later or contact admin.')
+                return
 
-        order.status = state if state in {'0', '1', '2', '3', '4', '5', '6'} else '1'
-        order.pay_order_no = data.get('payOrderNo') if isinstance(data, dict) else None
-        order.cashier_url = cashier
-        db.commit()
-    await cb.message.answer(f'Order: `{order.mch_order_no}`\nPay URL: {cashier}', parse_mode='Markdown')
-    await _safe_cb_answer(cb, 'Order created')
+            data = resp.get('data', {}) if isinstance(resp, dict) else {}
+            import json
+
+            order.provider_raw_create = json.dumps(resp, ensure_ascii=False)
+            cashier = provider._extract_cashier(resp)
+            state = str(data.get('state')) if isinstance(data, dict) and data.get('state') is not None else None
+
+            if not cashier:
+                top_msg = ''
+                if isinstance(resp, dict):
+                    top_msg = str(resp.get('msg') or resp.get('message') or '')
+
+                if 'DUPLICATE SUBMISSION' in top_msg.upper():
+                    order.status = '1'
+                    order.pay_order_no = data.get('payOrderNo') if isinstance(data, dict) else None
+                    db.commit()
+                    _RECENT_CHECKOUTS[cache_key] = {
+                        'ts': time.monotonic(),
+                        'mch_order_no': order.mch_order_no,
+                        'cashier_url': '',
+                    }
+                    await cb.message.answer(
+                        'Provider is processing an existing payment for this order.\n'
+                        f'Order: `{order.mch_order_no}`\n'
+                        'Use /status <mchOrderNo> in 10-20 seconds, or open My Orders to refresh status.',
+                        parse_mode='Markdown',
+                    )
+                    return
+
+                order.status = '3'
+                db.commit()
+                await cb.message.answer(
+                    'Provider did not return payment link (cashierUrl).\n'
+                    f'Order marked as failed.\nReason: {top_msg or "unknown provider response"}'
+                )
+                return
+
+            order.status = state if state in {'0', '1', '2', '3', '4', '5', '6'} else '1'
+            order.pay_order_no = data.get('payOrderNo') if isinstance(data, dict) else None
+            order.cashier_url = cashier
+            db.commit()
+            _RECENT_CHECKOUTS[cache_key] = {
+                'ts': time.monotonic(),
+                'mch_order_no': order.mch_order_no,
+                'cashier_url': cashier,
+            }
+
+        await cb.message.answer(f'Order: `{order.mch_order_no}`\nPay URL: {cashier}', parse_mode='Markdown')
+        await _safe_cb_answer(cb, 'Order created')
 
 
 @router.message(Command('status'))
