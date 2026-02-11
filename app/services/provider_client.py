@@ -24,8 +24,6 @@ class ProviderClient:
             'timestamp': int(time.time() * 1000),
             **payload,
         }
-        if settings.provider_username:
-            req['username'] = settings.provider_username
         req['signType'] = settings.provider_sign_type.upper()
         ignore_keys = None if include_sign_type_in_sign else {'signType'}
         req['sign'] = make_sign(req, settings.provider_key, settings.provider_sign_type, ignore_keys=ignore_keys)
@@ -104,12 +102,9 @@ class ProviderClient:
         logger.info('Provider create response mchOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
         logger.debug('Provider create raw mchOrderNo=%s body=%s', mch_order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
 
-        if self._is_signature_error(response) and settings.provider_retry_alt_sign:
-            alt_payload = self._build_payload(payload, include_sign_type_in_sign=False)
-            logger.warning('Retrying provider create with alternate sign composition mchOrderNo=%s', mch_order_no)
-            response = self._post('/api/pay/create', alt_payload)
-            logger.info('Provider create alt response mchOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
-            logger.debug('Provider create alt raw mchOrderNo=%s body=%s', mch_order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
+        if self._is_signature_error(response):
+            logger.error('Provider create signature error for mchOrderNo=%s. Alternate create retry is disabled to prevent duplicate submissions.', mch_order_no)
+            return response
 
         if self._is_duplicate_submission(response):
             duplicate_response = response

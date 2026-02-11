@@ -19,7 +19,6 @@ _REQUIRED_ENV = {
     'PROVIDER_KEY': 'secret',
     'PROVIDER_SIGN_TYPE': 'MD5',
     'PROVIDER_TIMEOUT_SECONDS': '15',
-    'PROVIDER_RETRY_ALT_SIGN': '1',
     'GLOBAL_FEE_PERCENT': '15.0',
     'DEFAULT_CURRENCY': 'usd',
     'NOTIFY_URL': 'https://example.com/notify',
@@ -38,9 +37,7 @@ class DummyProviderClient(ProviderClient):
 
     def _post(self, path: str, payload: dict):
         self.calls.append({'path': path, 'payload': payload})
-        if len(self.calls) == 1:
-            return {'code': 1005, 'msg': 'SIGNATURE ERROR'}
-        return {'code': 0, 'msg': 'success', 'data': {'cashierUrl': 'https://example.com/cashier'}}
+        return {'code': 1005, 'msg': 'SIGNATURE ERROR'}
 
 
 class DuplicateProviderClient(ProviderClient):
@@ -86,16 +83,13 @@ class DuplicateCode14Client(ProviderClient):
 
 
 class ProviderClientTests(unittest.TestCase):
-    def test_create_retries_on_signature_error_with_alt_signature(self):
+    def test_create_stops_on_signature_error_without_second_create(self):
         client = DummyProviderClient()
         response = client.create('ORD-1', 500, 'card')
-        self.assertEqual(response['code'], 0)
-        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(str(response['code']), '1005')
+        self.assertEqual(len(client.calls), 1)
         first_payload = client.calls[0]['payload']
-        second_payload = client.calls[1]['payload']
         self.assertEqual(first_payload['currency'], 'usd')
-        self.assertEqual(second_payload['currency'], 'usd')
-        self.assertNotEqual(first_payload['sign'], second_payload['sign'])
 
     def test_create_recovers_duplicate_by_query(self):
         client = DuplicateProviderClient()
