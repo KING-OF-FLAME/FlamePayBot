@@ -216,6 +216,30 @@ async def select_package(cb: CallbackQuery) -> None:
                 return
             gateway = db.get(GatewayConfig, pack.gateway_id)
             final_amount = int(round(pack.amount_cents * (1 + settings.global_fee_percent / 100)))
+
+            recent_open = db.scalar(
+                select(Order)
+                .where(
+                    Order.user_id == user.id,
+                    Order.way_code == gateway.way_code,
+                    Order.package_label == pack.label,
+                    Order.status.in_(['0', '1']),
+                    Order.cashier_url.is_not(None),
+                )
+                .order_by(Order.id.desc())
+            )
+            if recent_open and recent_open.cashier_url:
+                _RECENT_CHECKOUTS[cache_key] = {
+                    'ts': time.monotonic(),
+                    'mch_order_no': recent_open.mch_order_no,
+                    'cashier_url': recent_open.cashier_url,
+                }
+                await cb.message.answer(
+                    f'Using existing payable order.\nOrder: `{recent_open.mch_order_no}`\nPay URL: {recent_open.cashier_url}',
+                    parse_mode='Markdown',
+                )
+                return
+
             order = create_order(db, user, gateway.way_code, pack.label, pack.amount_cents, Decimal(str(settings.global_fee_percent)), final_amount)
             try:
                 resp = provider.create(order.mch_order_no, final_amount, gateway.way_code, f'{gateway.title}/{pack.label}')
@@ -253,7 +277,25 @@ async def select_package(cb: CallbackQuery) -> None:
                 if isinstance(resp, dict):
                     top_msg = str(resp.get('msg') or resp.get('message') or '')
 
-                if 'DUPLICATE SUBMISSION' in top_msg.upper():
+                if 'DUPLICATE SUBMISSION' in top_msg.upper() or str(resp.get('code', '')) == '14':
+                    recovered = provider.query(mch_order_no=order.mch_order_no)
+                    recovered_cashier = provider._extract_cashier(recovered)
+                    recovered_data = recovered.get('data', {}) if isinstance(recovered, dict) else {}
+                    if recovered_cashier:
+                        order.status = str(recovered_data.get('state')) if isinstance(recovered_data, dict) and recovered_data.get('state') is not None else '1'
+                        if order.status not in {'0', '1', '2', '3', '4', '5', '6'}:
+                            order.status = '1'
+                        order.pay_order_no = recovered_data.get('payOrderNo') if isinstance(recovered_data, dict) else None
+                        order.cashier_url = recovered_cashier
+                        db.commit()
+                        _RECENT_CHECKOUTS[cache_key] = {
+                            'ts': time.monotonic(),
+                            'mch_order_no': order.mch_order_no,
+                            'cashier_url': recovered_cashier,
+                        }
+                        await cb.message.answer(f'Order: `{order.mch_order_no}`\nPay URL: {recovered_cashier}', parse_mode='Markdown')
+                        return
+
                     order.status = '1'
                     order.pay_order_no = data.get('payOrderNo') if isinstance(data, dict) else None
                     db.commit()

@@ -70,6 +70,20 @@ class DuplicateEventuallyConsistentClient(ProviderClient):
         return {'code': 0, 'msg': 'success', 'data': {'payData': {'cashierUrl': 'https://example.com/later'}}}
 
 
+
+
+class DuplicateCode14Client(ProviderClient):
+    def __init__(self):
+        super().__init__()
+        self.calls: list[dict] = []
+
+    def _post(self, path: str, payload: dict):
+        self.calls.append({'path': path, 'payload': payload})
+        if path == '/api/pay/create':
+            return {'code': 14, 'msg': 'duplicate request already processed'}
+        return {'code': 1, 'msg': 'BUSINESS ERROR[Order does not exist]'}
+
+
 class ProviderClientTests(unittest.TestCase):
     def test_create_retries_on_signature_error_with_alt_signature(self):
         client = DummyProviderClient()
@@ -88,6 +102,15 @@ class ProviderClientTests(unittest.TestCase):
         self.assertEqual(response.get('code'), 0)
         self.assertEqual(response.get('data', {}).get('cashierUrl'), 'https://example.com/recovered')
         self.assertEqual([c['path'] for c in client.calls], ['/api/pay/create', '/api/pay/query'])
+
+
+    def test_duplicate_code_14_returns_original_duplicate_when_query_not_ready(self):
+        client = DuplicateCode14Client()
+        with patch('app.services.provider_client.time.sleep', return_value=None):
+            response = client.create('ORD-4', 500, 'card')
+        self.assertEqual(str(response.get('code')), '14')
+        self.assertIn('duplicate', str(response.get('msg', '')).lower())
+        self.assertEqual([c['path'] for c in client.calls], ['/api/pay/create', '/api/pay/query', '/api/pay/query', '/api/pay/query'])
 
     def test_create_duplicate_retries_query_until_cashier_available(self):
         client = DuplicateEventuallyConsistentClient()
