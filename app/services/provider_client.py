@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Any
 
@@ -8,6 +9,7 @@ from app.core.config import get_settings
 from app.services.signing import make_sign
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 class ProviderClient:
@@ -94,16 +96,21 @@ class ProviderClient:
         if client_ip:
             payload['clientIp'] = client_ip
         request_payload = self._build_payload(payload, include_sign_type_in_sign=True)
+        logger.info('Provider create request mchOrderNo=%s wayCode=%s amount=%s ts=%s signType=%s sign=%s', mch_order_no, way_code, payload['amount'], request_payload['timestamp'], request_payload['signType'], str(request_payload.get('sign', ''))[:8] + '...')
         response = self._post('/api/pay/create', request_payload)
+        logger.info('Provider create response mchOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
 
         if self._is_signature_error(response):
             alt_payload = self._build_payload(payload, include_sign_type_in_sign=False)
+            logger.warning('Retrying provider create with alternate sign composition mchOrderNo=%s', mch_order_no)
             response = self._post('/api/pay/create', alt_payload)
+            logger.info('Provider create alt response mchOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
 
         if self._is_duplicate_submission(response):
             duplicate_response = response
             for _ in range(3):
                 query_response = self.query(mch_order_no=mch_order_no)
+                logger.info('Provider duplicate recovery query mchOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, query_response.get('code') if isinstance(query_response, dict) else None, (query_response.get('msg') if isinstance(query_response, dict) else None), bool(self._extract_cashier(query_response) if isinstance(query_response, dict) else False))
                 if self._extract_cashier(query_response):
                     return query_response
                 time.sleep(0.8)
@@ -117,7 +124,10 @@ class ProviderClient:
         if not payload:
             raise ValueError('Either mchOrderNo or payOrderNo is required for query')
         request_payload = self._build_payload(payload)
-        return self._post('/api/pay/query', request_payload)
+        logger.info('Provider query request mchOrderNo=%s payOrderNo=%s ts=%s', mch_order_no, pay_order_no, request_payload['timestamp'])
+        response = self._post('/api/pay/query', request_payload)
+        logger.info('Provider query response mchOrderNo=%s payOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, pay_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
+        return response
 
     def close(self, mch_order_no: str, pay_order_no: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {'mchOrderNo': mch_order_no}

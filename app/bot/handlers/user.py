@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
@@ -119,6 +119,20 @@ def _check_access(user: User) -> str | None:
     return None
 
 
+def _pay_now_markup(url: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text='Pay Now', url=url))
+    return kb.as_markup()
+
+
+def _format_order_status_message(order: Order, show_link: bool = True) -> str:
+    label = ORDER_LABELS.get(order.status, order.status)
+    parts = [f'Order: `{order.mch_order_no}`', f'Status: {label}']
+    if show_link and order.status in {'0', '1'} and order.cashier_url:
+        parts.append(f'Pay URL: {order.cashier_url}')
+    return '\n'.join(parts)
+
+
 @router.message(Command('pay'))
 async def pay(message: Message) -> None:
     await send_gateways(message, message.from_user.id, message.from_user.username, message.from_user.full_name)
@@ -201,6 +215,13 @@ async def select_package(cb: CallbackQuery) -> None:
                 await cb.message.answer(
                     f'Using your latest checkout session.\nOrder: `{cached_order}`\nPay URL: {cached_url}',
                     parse_mode='Markdown',
+                    reply_markup=_pay_now_markup(cached_url),
+                )
+                return
+            if cached_order:
+                await cb.message.answer(
+                    f'Your previous checkout is still being prepared.\nOrder: `{cached_order}`\nUse /status <mchOrderNo> in 10-20 seconds.',
+                    parse_mode='Markdown',
                 )
                 return
 
@@ -237,6 +258,7 @@ async def select_package(cb: CallbackQuery) -> None:
                 await cb.message.answer(
                     f'Using existing payable order.\nOrder: `{recent_open.mch_order_no}`\nPay URL: {recent_open.cashier_url}',
                     parse_mode='Markdown',
+                    reply_markup=_pay_now_markup(recent_open.cashier_url),
                 )
                 return
 
@@ -293,7 +315,7 @@ async def select_package(cb: CallbackQuery) -> None:
                             'mch_order_no': order.mch_order_no,
                             'cashier_url': recovered_cashier,
                         }
-                        await cb.message.answer(f'Order: `{order.mch_order_no}`\nPay URL: {recovered_cashier}', parse_mode='Markdown')
+                        await cb.message.answer(f'Order: `{order.mch_order_no}`\nPay URL: {recovered_cashier}', parse_mode='Markdown', reply_markup=_pay_now_markup(recovered_cashier))
                         return
 
                     order.status = '1'
@@ -330,7 +352,7 @@ async def select_package(cb: CallbackQuery) -> None:
                 'cashier_url': cashier,
             }
 
-        await cb.message.answer(f'Order: `{order.mch_order_no}`\nPay URL: {cashier}', parse_mode='Markdown')
+        await cb.message.answer(f'Order: `{order.mch_order_no}`\nPay URL: {cashier}', parse_mode='Markdown', reply_markup=_pay_now_markup(cashier))
         await _safe_cb_answer(cb, 'Order created')
 
 
@@ -346,7 +368,13 @@ async def status_cmd(message: Message) -> None:
     if not order:
         await message.answer('Order not found.')
         return
-    await message.answer(f'{order.mch_order_no}: {ORDER_LABELS.get(order.status, order.status)}')
+
+    text = _format_order_status_message(order)
+    if order.status in {'0', '1'} and order.cashier_url:
+        await message.answer(text, parse_mode='Markdown', reply_markup=_pay_now_markup(order.cashier_url))
+        return
+
+    await message.answer(text, parse_mode='Markdown')
 
 
 @router.message(Command('orders'))
@@ -357,7 +385,18 @@ async def orders_cmd(message: Message) -> None:
     if not rows:
         await message.answer('No orders.')
         return
-    text = '\n'.join([f"{o.mch_order_no} | ${o.amount_cents/100:.2f} | {ORDER_LABELS.get(o.status, o.status)}" for o in rows])
+
+    lines: list[str] = []
+    payable_lines: list[str] = []
+    for o in rows:
+        lines.append(f"{o.mch_order_no} | ${o.amount_cents/100:.2f} | {ORDER_LABELS.get(o.status, o.status)}")
+        if o.status in {'0', '1'} and o.cashier_url:
+            payable_lines.append(f"{o.mch_order_no} -> {o.cashier_url}")
+
+    text = '\n'.join(lines)
+    if payable_lines:
+        text = f"{text}\n\nPayable links:\n" + '\n'.join(payable_lines)
+
     await message.answer(text)
 
 
