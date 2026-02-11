@@ -18,14 +18,14 @@ class ProviderClient:
         self.base = settings.provider_base_url.rstrip('/')
         self.timeout = settings.provider_timeout_seconds
 
-    def _build_payload(self, payload: dict[str, Any], *, include_sign_type_in_sign: bool = True) -> dict[str, Any]:
+    def _build_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         req = {
             'mchNo': settings.provider_mch_no,
             'timestamp': int(time.time() * 1000),
             **payload,
         }
         req['signType'] = settings.provider_sign_type.upper()
-        ignore_keys = None if include_sign_type_in_sign else {'signType'}
+        ignore_keys = None if settings.provider_sign_include_signtype else {'signType'}
         req['sign'] = make_sign(req, settings.provider_key, settings.provider_sign_type, ignore_keys=ignore_keys)
         return req
 
@@ -96,7 +96,7 @@ class ProviderClient:
 
         if client_ip:
             payload['clientIp'] = client_ip
-        request_payload = self._build_payload(payload, include_sign_type_in_sign=True)
+        request_payload = self._build_payload(payload)
         logger.info('Provider create request mchOrderNo=%s wayCode=%s amount=%s ts=%s signType=%s sign=%s', mch_order_no, way_code, payload['amount'], request_payload['timestamp'], request_payload['signType'], str(request_payload.get('sign', ''))[:8] + '...')
         response = self._post('/api/pay/create', request_payload)
         logger.info('Provider create response mchOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))

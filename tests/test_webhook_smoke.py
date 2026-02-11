@@ -20,6 +20,7 @@ _REQUIRED_ENV = {
     'PROVIDER_KEY': 'secret',
     'PROVIDER_SIGN_TYPE': 'MD5',
     'PROVIDER_TIMEOUT_SECONDS': '15',
+    'PROVIDER_SIGN_INCLUDE_SIGNTYPE': '1',
     'GLOBAL_FEE_PERCENT': '15.0',
     'DEFAULT_CURRENCY': 'USD',
     'NOTIFY_URL': 'https://example.com/notify',
