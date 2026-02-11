@@ -17,14 +17,61 @@ settings = get_settings()
 app = FastAPI(title='FlamePayBot Webhook')
 
 
+@app.get('/')
+async def root() -> dict[str, str]:
+    return {'status': 'ok', 'service': 'webhook'}
+
+
 @app.get('/health')
 async def health() -> dict[str, str]:
     return {'status': 'ok'}
 
 
+@app.get('/notify')
+async def notify_probe() -> JSONResponse:
+    return JSONResponse(
+        {
+            'code': 0,
+            'msg': 'notify endpoint is online; send POST callback payload from provider',
+        }
+    )
+
+
+async def _read_callback_payload(request: Request) -> dict[str, Any]:
+    content_type = request.headers.get('content-type', '').lower()
+
+    if 'application/json' in content_type:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ValueError('JSON body must be an object')
+        return payload
+
+    if 'application/x-www-form-urlencoded' in content_type or 'multipart/form-data' in content_type:
+        form = await request.form()
+        return dict(form)
+
+    body = await request.body()
+    if not body:
+        raise ValueError('Empty callback body')
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ValueError('Unsupported callback body format') from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError('JSON body must be an object')
+    return payload
+
+
 @app.post('/notify')
 async def notify(request: Request) -> JSONResponse:
-    payload: dict[str, Any] = await request.json()
+    try:
+        payload = await _read_callback_payload(request)
+    except ValueError as exc:
+        logger.warning('Invalid callback payload: %s', exc)
+        return JSONResponse({'code': -1, 'msg': 'invalid payload'}, status_code=400)
+
     if not verify_sign(payload, settings.provider_key, payload.get('signType', settings.provider_sign_type)):
         logger.warning('Invalid callback signature')
         return JSONResponse({'code': -1, 'msg': 'invalid sign'}, status_code=400)
