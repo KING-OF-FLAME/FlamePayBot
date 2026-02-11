@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from typing import Any
@@ -99,12 +100,14 @@ class ProviderClient:
         logger.info('Provider create request mchOrderNo=%s wayCode=%s amount=%s ts=%s signType=%s sign=%s', mch_order_no, way_code, payload['amount'], request_payload['timestamp'], request_payload['signType'], str(request_payload.get('sign', ''))[:8] + '...')
         response = self._post('/api/pay/create', request_payload)
         logger.info('Provider create response mchOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
+        logger.debug('Provider create raw mchOrderNo=%s body=%s', mch_order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
 
         if self._is_signature_error(response):
             alt_payload = self._build_payload(payload, include_sign_type_in_sign=False)
             logger.warning('Retrying provider create with alternate sign composition mchOrderNo=%s', mch_order_no)
             response = self._post('/api/pay/create', alt_payload)
             logger.info('Provider create alt response mchOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
+            logger.debug('Provider create alt raw mchOrderNo=%s body=%s', mch_order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
 
         if self._is_duplicate_submission(response):
             duplicate_response = response
@@ -127,6 +130,7 @@ class ProviderClient:
         logger.info('Provider query request mchOrderNo=%s payOrderNo=%s ts=%s', mch_order_no, pay_order_no, request_payload['timestamp'])
         response = self._post('/api/pay/query', request_payload)
         logger.info('Provider query response mchOrderNo=%s payOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, pay_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
+        logger.debug('Provider query raw mchOrderNo=%s payOrderNo=%s body=%s', mch_order_no, pay_order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
         return response
 
     def close(self, mch_order_no: str, pay_order_no: str | None = None) -> dict[str, Any]:

@@ -377,10 +377,10 @@ async def status_cmd(message: Message) -> None:
     await message.answer(text, parse_mode='Markdown')
 
 
-@router.message(Command('orders'))
-async def orders_cmd(message: Message) -> None:
+
+async def _send_orders_for_user(message: Message, tg_user_id: int, username: str | None, full_name: str | None) -> None:
     with SessionLocal() as db:
-        user = get_or_create_user(db, message.from_user.id, message.from_user.username, message.from_user.full_name)
+        user = get_or_create_user(db, tg_user_id, username, full_name)
         rows = recent_orders(db, user.id)
     if not rows:
         await message.answer('No orders.')
@@ -393,16 +393,20 @@ async def orders_cmd(message: Message) -> None:
         if o.status in {'0', '1'} and o.cashier_url:
             payable_lines.append(f"{o.mch_order_no} -> {o.cashier_url}")
 
-    text = '\n'.join(lines)
+    body = '\n'.join(lines)
     if payable_lines:
-        text = f"{text}\n\nPayable links:\n" + '\n'.join(payable_lines)
+        body = f"{body}\n\nPayable links:\n" + '\n'.join(payable_lines)
+    await message.answer(body)
 
-    await message.answer(text)
+
+@router.message(Command('orders'))
+async def orders_cmd(message: Message) -> None:
+    await _send_orders_for_user(message, message.from_user.id, message.from_user.username, message.from_user.full_name)
 
 
 @router.callback_query(F.data == 'menu:orders')
 async def menu_orders(cb: CallbackQuery) -> None:
-    await orders_cmd(cb.message)
+    await _send_orders_for_user(cb.message, cb.from_user.id, cb.from_user.username, cb.from_user.full_name)
     await _safe_cb_answer(cb)
 
 
