@@ -44,7 +44,7 @@ USER_HELP_TEXT = """User Commands:
 /help - Show this help
 /activate <code> - Activate account
 /pay - Start recharge flow
-/status <mchOrderNo|payOrderNo> - Check order
+/status <mchOrderNo|orderNo> - Check order
 /orders - Recent orders
 /payoutrequest - Create payout request
 /bal - Check balance
@@ -307,7 +307,7 @@ async def select_package(cb: CallbackQuery) -> None:
                         order.status = str(recovered_data.get('state')) if isinstance(recovered_data, dict) and recovered_data.get('state') is not None else '1'
                         if order.status not in {'0', '1', '2', '3', '4', '5', '6'}:
                             order.status = '1'
-                        order.pay_order_no = recovered_data.get('payOrderNo') if isinstance(recovered_data, dict) else None
+                        order.pay_order_no = (recovered_data.get('payOrderNo') or recovered_data.get('orderNo')) if isinstance(recovered_data, dict) else None
                         order.cashier_url = recovered_cashier
                         db.commit()
                         _RECENT_CHECKOUTS[cache_key] = {
@@ -319,7 +319,7 @@ async def select_package(cb: CallbackQuery) -> None:
                         return
 
                     order.status = '1'
-                    order.pay_order_no = data.get('payOrderNo') if isinstance(data, dict) else None
+                    order.pay_order_no = (data.get('payOrderNo') or data.get('orderNo')) if isinstance(data, dict) else None
                     db.commit()
                     _RECENT_CHECKOUTS[cache_key] = {
                         'ts': time.monotonic(),
@@ -343,7 +343,7 @@ async def select_package(cb: CallbackQuery) -> None:
                 return
 
             order.status = state if state in {'0', '1', '2', '3', '4', '5', '6'} else '1'
-            order.pay_order_no = data.get('payOrderNo') if isinstance(data, dict) else None
+            order.pay_order_no = (data.get('payOrderNo') or data.get('orderNo')) if isinstance(data, dict) else None
             order.cashier_url = cashier
             db.commit()
             _RECENT_CHECKOUTS[cache_key] = {
@@ -360,7 +360,7 @@ async def select_package(cb: CallbackQuery) -> None:
 async def status_cmd(message: Message) -> None:
     args = (message.text or '').split(maxsplit=1)
     if len(args) < 2:
-        await message.answer('Usage: /status <mchOrderNo|payOrderNo>')
+        await message.answer('Usage: /status <mchOrderNo|orderNo>')
         return
     q = args[1].strip()
     with SessionLocal() as db:

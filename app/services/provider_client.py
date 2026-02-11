@@ -118,21 +118,21 @@ class ProviderClient:
 
         return response
 
-    def query(self, mch_order_no: str | None = None, pay_order_no: str | None = None) -> dict[str, Any]:
-        payload = {'mchOrderNo': mch_order_no, 'payOrderNo': pay_order_no}
+    def query(self, mch_order_no: str | None = None, order_no: str | None = None) -> dict[str, Any]:
+        payload = {'mchOrderNo': mch_order_no, 'orderNo': order_no}
         payload = {k: v for k, v in payload.items() if v}
         if not payload:
-            raise ValueError('Either mchOrderNo or payOrderNo is required for query')
+            raise ValueError('Either mchOrderNo or orderNo is required for query')
         request_payload = self._build_payload(payload)
-        logger.info('Provider query request mchOrderNo=%s payOrderNo=%s ts=%s', mch_order_no, pay_order_no, request_payload['timestamp'])
+        logger.info('Provider query request mchOrderNo=%s orderNo=%s ts=%s', mch_order_no, order_no, request_payload['timestamp'])
         response = self._post('/api/pay/query', request_payload)
-        logger.info('Provider query response mchOrderNo=%s payOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, pay_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
-        logger.debug('Provider query raw mchOrderNo=%s payOrderNo=%s body=%s', mch_order_no, pay_order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
+        logger.info('Provider query response mchOrderNo=%s orderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
+        logger.debug('Provider query raw mchOrderNo=%s orderNo=%s body=%s', mch_order_no, order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
         return response
 
-    def close(self, mch_order_no: str, pay_order_no: str | None = None) -> dict[str, Any]:
+    def close(self, mch_order_no: str, order_no: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {'mchOrderNo': mch_order_no}
-        if pay_order_no:
-            payload['payOrderNo'] = pay_order_no
+        if order_no:
+            payload['orderNo'] = order_no
         request_payload = self._build_payload(payload)
         return self._post('/api/pay/close', request_payload)

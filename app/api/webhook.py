@@ -85,7 +85,7 @@ async def notify(request: Request) -> JSONResponse:
         return JSONResponse({'code': -1, 'msg': 'invalid sign'}, status_code=400)
 
     mch_order_no = payload.get('mchOrderNo')
-    pay_order_no = payload.get('payOrderNo')
+    pay_order_no = payload.get('payOrderNo') or payload.get('orderNo')
     state = str(payload.get('state', ''))
     event_key = f"{mch_order_no}:{pay_order_no}:{state}"
 
