@@ -7,7 +7,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings
-from app.services.signing import make_sign
+from app.services.signing import flatten_sign_data, make_sign
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class ProviderClient:
         self.base = settings.provider_base_url.rstrip('/')
         self.timeout = settings.provider_timeout_seconds
 
-    def _build_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _build_payload(self, payload: dict[str, Any], endpoint: str = '') -> dict[str, Any]:
         req = {
             'mchNo': settings.provider_mch_no,
             'timestamp': int(time.time() * 1000),
@@ -26,7 +26,9 @@ class ProviderClient:
         }
         req['signType'] = settings.provider_sign_type.upper()
         ignore_keys = None if settings.provider_sign_include_signtype else {'signType'}
+        sign_base = flatten_sign_data(req, ignore_keys=ignore_keys)
         req['sign'] = make_sign(req, settings.provider_key, settings.provider_sign_type, ignore_keys=ignore_keys)
+        logger.debug('Provider sign base endpoint=%s include_signType=%s base=%s', endpoint, settings.provider_sign_include_signtype, sign_base)
         return req
 
     @staticmethod
@@ -35,7 +37,7 @@ class ProviderClient:
             return False
         msg = str(resp.get('msg') or resp.get('message') or '').upper()
         code = str(resp.get('code', ''))
-        return ('SIGN' in msg and 'ERROR' in msg) or code in {'1005'}
+        return ('SIGN' in msg and 'ERROR' in msg) or code in {'12', '1005'}
 
 
     @staticmethod
@@ -96,8 +98,28 @@ class ProviderClient:
 
         if client_ip:
             payload['clientIp'] = client_ip
-        request_payload = self._build_payload(payload)
-        logger.info('Provider create request mchOrderNo=%s wayCode=%s amount=%s ts=%s signType=%s sign=%s', mch_order_no, way_code, payload['amount'], request_payload['timestamp'], request_payload['signType'], str(request_payload.get('sign', ''))[:8] + '...')
+        elif settings.provider_default_client_ip:
+            payload['clientIp'] = settings.provider_default_client_ip
+
+        if settings.provider_include_username:
+            payload['username'] = settings.provider_username
+
+        if settings.provider_expired_time_seconds > 0:
+            payload['expiredTime'] = settings.provider_expired_time_seconds
+
+        request_payload = self._build_payload(payload, endpoint='/api/pay/create')
+        logger.info(
+            'Provider create request mchOrderNo=%s wayCode=%s amount=%s ts=%s signType=%s include_username=%s include_expired=%s include_client_ip=%s sign=%s',
+            mch_order_no,
+            way_code,
+            payload['amount'],
+            request_payload['timestamp'],
+            request_payload['signType'],
+            'username' in payload,
+            'expiredTime' in payload,
+            'clientIp' in payload,
+            str(request_payload.get('sign', ''))[:8] + '...',
+        )
         response = self._post('/api/pay/create', request_payload)
         logger.info('Provider create response mchOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
         logger.debug('Provider create raw mchOrderNo=%s body=%s', mch_order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
@@ -119,20 +141,20 @@ class ProviderClient:
         return response
 
     def query(self, mch_order_no: str | None = None, order_no: str | None = None) -> dict[str, Any]:
-        payload = {'mchOrderNo': mch_order_no, 'orderNo': order_no}
+        payload = {'mchOrderNo': mch_order_no, 'payOrderNo': order_no}
         payload = {k: v for k, v in payload.items() if v}
         if not payload:
-            raise ValueError('Either mchOrderNo or orderNo is required for query')
-        request_payload = self._build_payload(payload)
-        logger.info('Provider query request mchOrderNo=%s orderNo=%s ts=%s', mch_order_no, order_no, request_payload['timestamp'])
+            raise ValueError('Either mchOrderNo or payOrderNo is required for query')
+        request_payload = self._build_payload(payload, endpoint='/api/pay/query')
+        logger.info('Provider query request mchOrderNo=%s payOrderNo=%s ts=%s', mch_order_no, order_no, request_payload['timestamp'])
         response = self._post('/api/pay/query', request_payload)
-        logger.info('Provider query response mchOrderNo=%s orderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
-        logger.debug('Provider query raw mchOrderNo=%s orderNo=%s body=%s', mch_order_no, order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
+        logger.info('Provider query response mchOrderNo=%s payOrderNo=%s code=%s msg=%s has_cashier=%s', mch_order_no, order_no, response.get('code') if isinstance(response, dict) else None, (response.get('msg') if isinstance(response, dict) else None), bool(self._extract_cashier(response) if isinstance(response, dict) else False))
+        logger.debug('Provider query raw mchOrderNo=%s payOrderNo=%s body=%s', mch_order_no, order_no, json.dumps(response, ensure_ascii=False) if isinstance(response, dict) else str(response))
         return response
 
     def close(self, mch_order_no: str, order_no: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {'mchOrderNo': mch_order_no}
         if order_no:
-            payload['orderNo'] = order_no
-        request_payload = self._build_payload(payload)
+            payload['payOrderNo'] = order_no
+        request_payload = self._build_payload(payload, endpoint='/api/pay/close')
         return self._post('/api/pay/close', request_payload)

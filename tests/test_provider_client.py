@@ -69,8 +69,6 @@ class DuplicateEventuallyConsistentClient(ProviderClient):
         return {'code': 0, 'msg': 'success', 'data': {'payData': {'cashierUrl': 'https://example.com/later'}}}
 
 
-
-
 class DuplicateCode14Client(ProviderClient):
     def __init__(self):
         super().__init__()
@@ -81,6 +79,16 @@ class DuplicateCode14Client(ProviderClient):
         if path == '/api/pay/create':
             return {'code': 14, 'msg': 'duplicate request already processed'}
         return {'code': 1, 'msg': 'BUSINESS ERROR[Order does not exist]'}
+
+
+class CapturePayloadClient(ProviderClient):
+    def __init__(self):
+        super().__init__()
+        self.calls: list[dict] = []
+
+    def _post(self, path: str, payload: dict):
+        self.calls.append({'path': path, 'payload': payload})
+        return {'code': 0, 'msg': 'ok', 'data': {}}
 
 
 class ProviderClientTests(unittest.TestCase):
@@ -99,7 +107,6 @@ class ProviderClientTests(unittest.TestCase):
         self.assertEqual(response.get('data', {}).get('cashierUrl'), 'https://example.com/recovered')
         self.assertEqual([c['path'] for c in client.calls], ['/api/pay/create', '/api/pay/query'])
 
-
     def test_duplicate_code_14_returns_original_duplicate_when_query_not_ready(self):
         client = DuplicateCode14Client()
         with patch('app.services.provider_client.time.sleep', return_value=None):
@@ -114,6 +121,33 @@ class ProviderClientTests(unittest.TestCase):
             response = client.create('ORD-3', 500, 'card')
         self.assertEqual(response.get('data', {}).get('payData', {}).get('cashierUrl'), 'https://example.com/later')
         self.assertEqual([c['path'] for c in client.calls], ['/api/pay/create', '/api/pay/query', '/api/pay/query'])
+
+    def test_signature_error_code_12_is_detected(self):
+        self.assertTrue(ProviderClient._is_signature_error({'code': 12, 'msg': 'something'}))
+
+    def test_create_includes_optional_signature_fields_from_settings(self):
+        client = CapturePayloadClient()
+        with patch('app.services.provider_client.settings.provider_include_username', True), \
+            patch('app.services.provider_client.settings.provider_expired_time_seconds', 1200), \
+            patch('app.services.provider_client.settings.provider_default_client_ip', '8.8.8.8'):
+            client.create('ORD-5', 700, 'cashapp')
+
+        payload = client.calls[0]['payload']
+        self.assertEqual(payload['username'], 'tester')
+        self.assertEqual(payload['expiredTime'], 1200)
+        self.assertEqual(payload['clientIp'], '8.8.8.8')
+
+    def test_query_and_close_use_pay_order_no_field(self):
+        client = CapturePayloadClient()
+        client.query(order_no='PO-1')
+        client.close('ORD-6', order_no='PO-2')
+
+        query_payload = client.calls[0]['payload']
+        close_payload = client.calls[1]['payload']
+        self.assertEqual(query_payload['payOrderNo'], 'PO-1')
+        self.assertNotIn('orderNo', query_payload)
+        self.assertEqual(close_payload['payOrderNo'], 'PO-2')
+        self.assertNotIn('orderNo', close_payload)
 
 
 if __name__ == '__main__':

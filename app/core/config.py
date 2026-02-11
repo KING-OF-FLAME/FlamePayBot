@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     provider_sign_type: str = Field(alias='PROVIDER_SIGN_TYPE')
     provider_timeout_seconds: int = Field(default=15, alias='PROVIDER_TIMEOUT_SECONDS')
     provider_sign_include_signtype: bool = Field(default=True, alias='PROVIDER_SIGN_INCLUDE_SIGNTYPE')
+    provider_include_username: bool = Field(default=False, alias='PROVIDER_INCLUDE_USERNAME')
+    provider_expired_time_seconds: int = Field(default=0, alias='PROVIDER_EXPIRED_TIME_SECONDS')
+    provider_default_client_ip: str | None = Field(default=None, alias='PROVIDER_DEFAULT_CLIENT_IP')
 
     global_fee_percent: float = Field(default=15.0, alias='GLOBAL_FEE_PERCENT')
     default_currency: str = Field(default='USD', alias='DEFAULT_CURRENCY')
