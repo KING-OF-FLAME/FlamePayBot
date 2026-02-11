@@ -34,6 +34,22 @@ class ProviderClient:
         code = str(resp.get('code', ''))
         return ('SIGN' in msg and 'ERROR' in msg) or code in {'1005'}
 
+
+    @staticmethod
+    def _is_duplicate_submission(resp: dict[str, Any]) -> bool:
+        if not isinstance(resp, dict):
+            return False
+        msg = str(resp.get('msg') or resp.get('message') or '').upper()
+        return 'DUPLICATE' in msg and 'SUBMISSION' in msg
+
+    @staticmethod
+    def _extract_cashier(resp: dict[str, Any]) -> str | None:
+        data = resp.get('data') if isinstance(resp, dict) else None
+        if isinstance(data, dict):
+            cashier = data.get('cashierUrl')
+            return str(cashier) if cashier else None
+        return None
+
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3), reraise=True)
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         with httpx.Client(timeout=self.timeout) as client:
@@ -68,6 +84,11 @@ class ProviderClient:
         if self._is_signature_error(response):
             alt_payload = self._build_payload(payload, include_sign_type_in_sign=False)
             response = self._post('/api/pay/create', alt_payload)
+
+        if self._is_duplicate_submission(response):
+            query_response = self.query(mch_order_no=mch_order_no)
+            if self._extract_cashier(query_response):
+                return query_response
 
         return response
 

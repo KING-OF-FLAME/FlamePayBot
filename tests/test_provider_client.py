@@ -41,6 +41,18 @@ class DummyProviderClient(ProviderClient):
         return {'code': 0, 'msg': 'success', 'data': {'cashierUrl': 'https://example.com/cashier'}}
 
 
+class DuplicateProviderClient(ProviderClient):
+    def __init__(self):
+        super().__init__()
+        self.calls: list[dict] = []
+
+    def _post(self, path: str, payload: dict):
+        self.calls.append({'path': path, 'payload': payload})
+        if path == '/api/pay/create':
+            return {'code': 2008, 'msg': 'DUPLICATE SUBMISSION[/api/pay/create]'}
+        return {'code': 0, 'msg': 'success', 'data': {'cashierUrl': 'https://example.com/recovered', 'payOrderNo': 'PO123', 'state': '1'}}
+
+
 class ProviderClientTests(unittest.TestCase):
     def test_create_retries_on_signature_error_with_alt_signature(self):
         client = DummyProviderClient()
@@ -53,6 +65,12 @@ class ProviderClientTests(unittest.TestCase):
         self.assertEqual(second_payload['currency'], 'usd')
         self.assertNotEqual(first_payload['sign'], second_payload['sign'])
 
+    def test_create_recovers_duplicate_by_query(self):
+        client = DuplicateProviderClient()
+        response = client.create('ORD-2', 500, 'card')
+        self.assertEqual(response.get('code'), 0)
+        self.assertEqual(response.get('data', {}).get('cashierUrl'), 'https://example.com/recovered')
+        self.assertEqual([c['path'] for c in client.calls], ['/api/pay/create', '/api/pay/query'])
 
 
 if __name__ == '__main__':
