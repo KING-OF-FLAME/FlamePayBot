@@ -117,6 +117,8 @@ If you see `httpx.ConnectError: [Errno 11001] getaddrinfo failed`, your bot cann
 Checklist:
 - Ensure `.env` has a valid provider URL:
   - `PROVIDER_BASE_URL=https://www.ggusonepay.com`
+- Ensure provider currency is 3-letter lowercase for create API:
+  - `DEFAULT_CURRENCY=usd`
 - Do not include spaces or invalid hostname in `PROVIDER_BASE_URL`.
 - Confirm Windows/RDP machine DNS and firewall allow outbound HTTPS.
 - Restart bot after `.env` changes.

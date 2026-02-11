@@ -48,7 +48,7 @@ class ProviderClient:
         payload = {
             'mchOrderNo': mch_order_no,
             'amount': int(amount_cents),
-            'currency': settings.default_currency.upper(),
+            'currency': settings.default_currency.strip().lower(),
             'wayCode': way_code,
             'notifyUrl': settings.notify_url,
             'returnUrl': settings.return_url,
@@ -56,6 +56,10 @@ class ProviderClient:
             'body': remark or 'Recharge order',
             'extParam': f'user:{mch_order_no}',
         }
+        currency = str(payload['currency'])
+        if len(currency) != 3 or currency.lower() != currency:
+            raise ValueError('DEFAULT_CURRENCY must be a 3-letter lowercase code for provider create API (e.g. usd)')
+
         if client_ip:
             payload['clientIp'] = client_ip
         request_payload = self._build_payload(payload, include_sign_type_in_sign=True)

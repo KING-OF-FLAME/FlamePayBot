@@ -49,9 +49,10 @@ class ProviderClientTests(unittest.TestCase):
         self.assertEqual(len(client.calls), 2)
         first_payload = client.calls[0]['payload']
         second_payload = client.calls[1]['payload']
-        self.assertEqual(first_payload['currency'], 'USD')
-        self.assertEqual(second_payload['currency'], 'USD')
+        self.assertEqual(first_payload['currency'], 'usd')
+        self.assertEqual(second_payload['currency'], 'usd')
         self.assertNotEqual(first_payload['sign'], second_payload['sign'])
+
 
 
 if __name__ == '__main__':
