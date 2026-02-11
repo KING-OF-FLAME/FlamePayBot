@@ -42,13 +42,27 @@ class ProviderClient:
         msg = str(resp.get('msg') or resp.get('message') or '').upper()
         return 'DUPLICATE' in msg and 'SUBMISSION' in msg
 
-    @staticmethod
-    def _extract_cashier(resp: dict[str, Any]) -> str | None:
+    @classmethod
+    def _extract_cashier(cls, resp: dict[str, Any]) -> str | None:
+        def _walk(node: Any) -> str | None:
+            if isinstance(node, dict):
+                for key in ('cashierUrl', 'cashierURL', 'payUrl', 'payURL', 'redirectUrl', 'redirectURL', 'url'):
+                    value = node.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+                for value in node.values():
+                    nested = _walk(value)
+                    if nested:
+                        return nested
+            elif isinstance(node, list):
+                for item in node:
+                    nested = _walk(item)
+                    if nested:
+                        return nested
+            return None
+
         data = resp.get('data') if isinstance(resp, dict) else None
-        if isinstance(data, dict):
-            cashier = data.get('cashierUrl')
-            return str(cashier) if cashier else None
-        return None
+        return _walk(data)
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3), reraise=True)
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -86,9 +100,15 @@ class ProviderClient:
             response = self._post('/api/pay/create', alt_payload)
 
         if self._is_duplicate_submission(response):
-            query_response = self.query(mch_order_no=mch_order_no)
-            if self._extract_cashier(query_response):
-                return query_response
+            last_query_response: dict[str, Any] | None = None
+            for _ in range(3):
+                query_response = self.query(mch_order_no=mch_order_no)
+                last_query_response = query_response
+                if self._extract_cashier(query_response):
+                    return query_response
+                time.sleep(0.8)
+            if last_query_response is not None:
+                return last_query_response
 
         return response
 

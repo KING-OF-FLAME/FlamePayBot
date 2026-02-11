@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 
 _REQUIRED_ENV = {
     'APP_ENV': 'development',
@@ -53,6 +54,22 @@ class DuplicateProviderClient(ProviderClient):
         return {'code': 0, 'msg': 'success', 'data': {'cashierUrl': 'https://example.com/recovered', 'payOrderNo': 'PO123', 'state': '1'}}
 
 
+class DuplicateEventuallyConsistentClient(ProviderClient):
+    def __init__(self):
+        super().__init__()
+        self.calls: list[dict] = []
+        self.query_count = 0
+
+    def _post(self, path: str, payload: dict):
+        self.calls.append({'path': path, 'payload': payload})
+        if path == '/api/pay/create':
+            return {'code': 2008, 'msg': 'DUPLICATE SUBMISSION[/api/pay/create]'}
+        self.query_count += 1
+        if self.query_count == 1:
+            return {'code': 0, 'msg': 'processing', 'data': {'state': '1'}}
+        return {'code': 0, 'msg': 'success', 'data': {'payData': {'cashierUrl': 'https://example.com/later'}}}
+
+
 class ProviderClientTests(unittest.TestCase):
     def test_create_retries_on_signature_error_with_alt_signature(self):
         client = DummyProviderClient()
@@ -71,6 +88,13 @@ class ProviderClientTests(unittest.TestCase):
         self.assertEqual(response.get('code'), 0)
         self.assertEqual(response.get('data', {}).get('cashierUrl'), 'https://example.com/recovered')
         self.assertEqual([c['path'] for c in client.calls], ['/api/pay/create', '/api/pay/query'])
+
+    def test_create_duplicate_retries_query_until_cashier_available(self):
+        client = DuplicateEventuallyConsistentClient()
+        with patch('app.services.provider_client.time.sleep', return_value=None):
+            response = client.create('ORD-3', 500, 'card')
+        self.assertEqual(response.get('data', {}).get('payData', {}).get('cashierUrl'), 'https://example.com/later')
+        self.assertEqual([c['path'] for c in client.calls], ['/api/pay/create', '/api/pay/query', '/api/pay/query'])
 
 
 if __name__ == '__main__':

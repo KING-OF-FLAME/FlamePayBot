@@ -223,15 +223,29 @@ async def select_package(cb: CallbackQuery) -> None:
         import json
 
         order.provider_raw_create = json.dumps(resp, ensure_ascii=False)
-        cashier = data.get('cashierUrl') if isinstance(data, dict) else None
+        cashier = provider._extract_cashier(resp)
         state = str(data.get('state')) if isinstance(data, dict) and data.get('state') is not None else None
 
         if not cashier:
-            order.status = '3'
-            db.commit()
             top_msg = ''
             if isinstance(resp, dict):
                 top_msg = str(resp.get('msg') or resp.get('message') or '')
+
+            if 'DUPLICATE SUBMISSION' in top_msg.upper():
+                order.status = '1'
+                order.pay_order_no = data.get('payOrderNo') if isinstance(data, dict) else None
+                db.commit()
+                await cb.message.answer(
+                    'Provider is processing an existing payment for this order.\n'
+                    f'Order: `{order.mch_order_no}`\n'
+                    'Use /status <mchOrderNo> in 10-20 seconds, or open My Orders to refresh status.',
+                    parse_mode='Markdown',
+                )
+                await _safe_cb_answer(cb)
+                return
+
+            order.status = '3'
+            db.commit()
             await cb.message.answer(
                 'Provider did not return payment link (cashierUrl).\n'
                 f'Order marked as failed.\nReason: {top_msg or "unknown provider response"}'
