@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -43,11 +44,37 @@ def parse_expiry(date_str: str | None):
     return datetime.fromisoformat(date_str)
 
 
+def parse_package_amount_to_cents(raw_amount: str) -> int:
+    value = (raw_amount or '').strip()
+    if not value:
+        raise ValueError('amount is required')
+
+    if '.' in value:
+        try:
+            amount = Decimal(value)
+        except InvalidOperation as exc:
+            raise ValueError('invalid decimal amount') from exc
+        if amount <= 0:
+            raise ValueError('amount must be greater than zero')
+        cents = amount * Decimal('100')
+        if cents != cents.quantize(Decimal('1')):
+            raise ValueError('amount can have at most 2 decimal places')
+        return int(cents)
+
+    try:
+        cents_int = int(value)
+    except ValueError as exc:
+        raise ValueError('invalid cent amount') from exc
+    if cents_int <= 0:
+        raise ValueError('amount must be greater than zero')
+    return cents_int
+
+
 @router.message(Command('admin'))
 async def admin_menu(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
-    await message.answer('/gencode [max_uses] [YYYY-MM-DD]\n/codes\n/ban <tg_id>\n/unban <tg_id>\n/setfee <percent>\n/gateway\n/gateway_add <code>\n/gateway_remove <code>\n/gateway_config <way_code> <title> <on|off>\n/package_add <way_code> <label> <amount_cents> <sort_order>\n/payouts\n/payout_approve <id> [txid] [note]\n/payout_reject <id> <reason>\n/orders_search <term>\n/reconcile <mchOrderNo>')
+    await message.answer('/gencode [max_uses] [YYYY-MM-DD]\n/codes\n/ban <tg_id>\n/unban <tg_id>\n/setfee <percent>\n/gateway\n/gateway_add <code>\n/gateway_remove <code>\n/gateway_config <way_code> <title> <on|off>\n/package_add <way_code> <label> <amount> <sort_order> (1999 cents or 19.99 dollars)\n/payouts\n/payout_approve <id> [txid] [note]\n/payout_reject <id> <reason>\n/orders_search <term>\n/reconcile <mchOrderNo>')
 
 
 @router.message(Command('gateway'))
@@ -293,9 +320,16 @@ async def package_add(message: Message) -> None:
         return
     args = (message.text or '').split(maxsplit=4)
     if len(args) < 5:
-        await message.answer('Usage: /package_add <way_code> <label> <amount_cents> <sort_order>')
+        await message.answer('Usage: /package_add <way_code> <label> <amount> <sort_order>\namount accepts cents (e.g. 1999) or decimal dollars (e.g. 19.99)')
         return
-    way_code, label, amount_cents, sort_order = args[1], args[2], int(args[3]), int(args[4])
+
+    way_code, label = args[1], args[2]
+    try:
+        amount_cents = parse_package_amount_to_cents(args[3])
+        sort_order = int(args[4])
+    except ValueError as exc:
+        await message.answer(f'Invalid package amount: {exc}')
+        return
     with SessionLocal() as db:
         gw = db.scalar(select(GatewayConfig).where(GatewayConfig.way_code == way_code))
         if not gw:
