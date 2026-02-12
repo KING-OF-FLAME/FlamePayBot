@@ -263,8 +263,18 @@ async def select_package(cb: CallbackQuery) -> None:
                 return
 
             order = create_order(db, user, gateway.way_code, pack.label, pack.amount_cents, Decimal(str(settings.global_fee_percent)), final_amount)
+            provider_amount = int(pack.amount_cents)
+            if provider_amount != final_amount:
+                logger.info(
+                    'Provider create uses base package amount to satisfy channel fixed-amount constraints mchOrderNo=%s wayCode=%s package_amount=%s internal_final_amount=%s',
+                    order.mch_order_no,
+                    gateway.way_code,
+                    provider_amount,
+                    final_amount,
+                )
+
             try:
-                resp = provider.create(order.mch_order_no, final_amount, gateway.way_code, f'{gateway.title}/{pack.label}')
+                resp = provider.create(order.mch_order_no, provider_amount, gateway.way_code, f'{gateway.title}/{pack.label}')
             except httpx.ConnectError:
                 order.status = '3'
                 db.commit()
