@@ -3,9 +3,26 @@ import json
 from typing import Any
 
 
+_EMPTY_VALUES = (None, '')
+
+
+def _is_empty(value: Any) -> bool:
+    if value in _EMPTY_VALUES:
+        return True
+    if isinstance(value, (dict, list, tuple, set)) and len(value) == 0:
+        return True
+    return False
+
+
 def _normalize(value: Any) -> Any:
     if isinstance(value, dict):
-        return {k: _normalize(value[k]) for k in sorted(value.keys()) if value[k] not in (None, '', [])}
+        normalized: dict[str, Any] = {}
+        for key in sorted(value.keys()):
+            child = _normalize(value[key])
+            if _is_empty(child):
+                continue
+            normalized[key] = child
+        return normalized
     if isinstance(value, list):
         return [_normalize(v) for v in value]
     return value
@@ -13,13 +30,13 @@ def _normalize(value: Any) -> Any:
 
 def flatten_sign_data(data: dict[str, Any], ignore_keys: set[str] | None = None) -> str:
     ignored = set(ignore_keys or set()) | {'sign'}
-    normalized = _normalize({k: v for k, v in data.items() if k not in ignored and v not in (None, '', [])})
+    normalized = _normalize({k: v for k, v in data.items() if k not in ignored and not _is_empty(v)})
     parts = []
-    for k in sorted(normalized.keys()):
-        v = normalized[k]
-        if isinstance(v, (dict, list)):
-            v = json.dumps(v, separators=(',', ':'), ensure_ascii=False)
-        parts.append(f'{k}={v}')
+    for key in sorted(normalized.keys()):
+        value = normalized[key]
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, separators=(',', ':'), ensure_ascii=False)
+        parts.append(f'{key}={value}')
     return '&'.join(parts)
 
 
